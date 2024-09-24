@@ -42,8 +42,6 @@ class GibbsReconstructor:
             residuals = y_k - self.regs[k].predict(X_k)
             self.stds[k] = np.std(residuals)
 
-            print(k)
-
     def predict(self, z, n_samples):
         missing_idxs = np.where(np.isnan(z))[0]
 
