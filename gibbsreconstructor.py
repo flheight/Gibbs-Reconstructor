@@ -30,7 +30,7 @@ class GibbsReconstructor:
         self.alpha = alpha
         self.regs, self.stds = {}, {}
 
-    def fit(self, X, alpha):
+    def fit(self, X):
         for k in range(X.shape[1]):
             mask = np.arange(X.shape[1]) != k
             X_k = X[:, mask]
