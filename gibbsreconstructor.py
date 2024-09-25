@@ -1,62 +1,94 @@
 import numpy as np
-from scipy.linalg.blas import dsyrk, dgemv
-from scipy.linalg import solve
-
-
-class _Rdige:
-    def __init__(self, alpha):
-        self.alpha = alpha
-
-    def fit(self, X, y):
-        X = np.hstack([X, np.ones((X.shape[0], 1))])
-        X = np.array(X, order="F", dtype=np.float64)
-        y = np.array(y, order="F", dtype=np.float64)
-
-        XtX = dsyrk(1.0, X, trans=True)
-        Xty = dgemv(1.0, X, y, trans=True)
-
-        XtX.flat[:: XtX.shape[0] + 1] += self.alpha
-
-        self.coef_ = np.asfortranarray(solve(XtX, Xty, assume_a="pos"))
-
-    def predict(self, x):
-        x = np.hstack([x, np.ones((x.shape[0], 1))])
-        x = np.array(x, order="F", dtype=np.float64)
-        return dgemv(1.0, x, self.coef_)
+from scipy.linalg.lapack import dposv
 
 
 class GibbsReconstructor:
-    def __init__(self, alpha):
+    """
+    A class to perform Gibbs reconstruction of missing data in a dataset.
+
+    This class uses a regularized approach to estimate the coefficients for reconstructing
+    missing values in the input data matrix using Gibbs sampling methods.
+
+    Attributes:
+        alpha (float): Regularization parameter for the reconstruction.
+
+    Methods:
+        fit(X): Fits the model to the input data matrix X.
+        predict(z): Predicts missing values in the input array z.
+    """
+
+    def __init__(self, alpha=1e-3):
+        """
+        Initializes the GibbsReconstructor with a given regularization parameter.
+
+        Parameters:
+            alpha (float): Regularization parameter. Default is 1e-3.
+        """
         self.alpha = alpha
-        self.regs, self.stds = {}, {}
 
     def fit(self, X):
-        for k in range(X.shape[1]):
-            mask = np.arange(X.shape[1]) != k
-            X_k = X[:, mask]
-            y_k = X[:, k]
+        """
+        Fits the GibbsReconstructor model to the input data.
 
-            self.regs[k] = _Rdige(alpha=self.alpha)
-            self.regs[k].fit(X_k, y_k)
+        This method computes the coefficients based on the provided dataset X,
+        taking into account the regularization to handle overfitting.
 
-            residuals = y_k - self.regs[k].predict(X_k)
-            self.stds[k] = np.std(residuals)
+        Parameters:
+            X (ndarray): A 2D NumPy array of shape (n_samples, n_features) representing the input data.
 
-    def predict(self, z, n_samples):
+        Returns:
+            None: The coefficients are stored in the instance variable coef_.
+        """
+        n, p = X.shape
+
+        X = np.hstack((X, np.ones((n, 1))))
+
+        beta = np.random.randn(p + 1, p + 1)
+
+        XtX = X.T @ X
+
+        beta = np.zeros((p + 1, p + 1))
+
+        for k in range(p):
+            mask = np.ones(p + 1, dtype=bool)
+            mask[k] = False
+
+            LHS = np.array(XtX[mask][:, mask], order="F", dtype=np.float64)
+            LHS.flat[:: p + 1] += n * self.alpha
+            RHS = np.array(XtX[mask, k], order="F", dtype=np.float64)
+
+            beta[k, mask] = dposv(LHS, RHS)[1]
+
+        self.coef_ = beta
+
+    def predict(self, z):
+        """
+        Predicts missing values in the input array z using the fitted model.
+
+        This method handles missing values by initializing them with random draws from a normal distribution
+        and reconstructs the data based on the learned coefficients.
+
+        Parameters:
+            z (ndarray): A 1D NumPy array containing the data with potential missing values (NaNs).
+
+        Returns:
+            ndarray: A reconstructed 1D NumPy array with estimated values for the missing entries.
+        """
+        p = z.size
         missing_idxs = np.where(np.isnan(z))[0]
 
-        c = z
-        c[missing_idxs] = 0
-        s = np.zeros_like(c)
+        z[missing_idxs] = np.random.randn(missing_idxs.size)
 
-        for _ in range(n_samples):
-            for k in missing_idxs:
-                mask = np.arange(c.size) != k
+        A = np.eye(p + 1)
+        for k in missing_idxs:
+            A[k] = np.dot(self.coef_[k], A)
 
-                mu_k = self.regs[k].predict(c[None, mask])
-                sigma_k = self.stds[k]
-                c[k] = np.random.normal(mu_k, sigma_k)[0]
+        D, P = np.linalg.eig(A)
+        D = np.diag(D)
+        P_inv = np.linalg.inv(P)
+        D[np.abs(D) < 1] = 0
+        A_inf = P @ D @ P_inv
 
-            s += c
+        A_inf = A_inf.real[:p, :p]
 
-        return s / n_samples
+        return A_inf @ z
