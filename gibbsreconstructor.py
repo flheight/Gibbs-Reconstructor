@@ -10,7 +10,7 @@ class GibbsReconstructor:
     missing values in the input data matrix using Gibbs sampling methods.
 
     Attributes:
-        alpha (float): Regularization parameter for the reconstruction.
+        alpha (float): Regularization parameter for the Ridge regression.
 
     Methods:
         fit(X): Fits the model to the input data matrix X.
